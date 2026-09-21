@@ -1,0 +1,78 @@
+name: FFmpeg 9 validation
+
+on:
+  push:
+    branches:
+      - validation/ffmpeg-9.0.2-link
+
+env:
+  XMAKE_PKG_CACHEDIR: ${{ github.workspace }}\\.xmake-cache
+  XMAKE_PKG_INSTALLDIR: ${{ github.workspace }}\\.xmake-packages
+  VCPKG_ROOT: C:\\vcpkg
+  VCPKG_OVERLAY_PORTS: ${{ github.workspace }}\\vcpkg-overlays
+  VCPKG_DEFAULT_TRIPLET: x64-windows-static-md
+  VCPKG_DEFAULT_HOST_TRIPLET: x64-windows
+
+jobs:
+  validate:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - uses: xmake-io/github-action-setup-xmake@v1
+        with:
+          xmake-version: latest
+
+      - uses: actions/cache@v5
+        with:
+          path: ${{ github.workspace }}\\.xmake-cache
+          key: ${{ runner.os }}-${{ runner.arch }}-ffmpeg9-downloads
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-xmake-
+
+      - uses: actions/cache@v5
+        with:
+          path: ${{ github.workspace }}\\.xmake-packages
+          key: ${{ runner.os }}-${{ runner.arch }}-ffmpeg9-packages-${{ hashFiles('xmake.lua', 'xmake-packages/**/*.lua') }}
+
+      - name: configure core
+        run: xmake config -y -vD --mode=releasedbg --toolchain=msvc --libplacebo_mode=runtime
+
+      - name: build core
+        run: xmake build -y -vD f4ffmpeg
+
+      - name: install static libplacebo
+        run: .\\tools\\install-libplacebo-vcpkg.ps1
+
+      - name: configure optional backend
+        run: xmake config -y -vD --mode=releasedbg --toolchain=msvc --libplacebo_mode=static
+
+      - name: build optional backend
+        run: xmake build -y -vD f4ffmpeg_placebo
+
+      - name: build loader smoke
+        run: xmake build -y -vD placebo-loader-smoke
+
+      - name: build render smoke
+        run: xmake build -y -vD placebo-render-smoke
+
+      - name: smoke load
+        run: |
+          $backend = Get-ChildItem build -Recurse -Filter f4ffmpeg_placebo.dll -File | Select-Object -First 1
+          $smoke = Get-ChildItem build -Recurse -Filter placebo-loader-smoke.exe -File | Select-Object -First 1
+          if (-not $backend -or -not $smoke) { throw 'Required smoke-test output missing' }
+          & $smoke.FullName $backend.FullName
+          if ($LASTEXITCODE -ne 0) { throw "Loader smoke failed: $LASTEXITCODE" }
+
+      - name: smoke render
+        run: |
+          $backend = Get-ChildItem build -Recurse -Filter f4ffmpeg_placebo.dll -File | Select-Object -First 1
+          $smoke = Get-ChildItem build -Recurse -Filter placebo-render-smoke.exe -File | Select-Object -First 1
+          if (-not $backend -or -not $smoke) { throw 'Required render-smoke output missing' }
+          & $smoke.FullName $backend.FullName
+          if ($LASTEXITCODE -ne 0) { throw "Render smoke failed: $LASTEXITCODE" }
