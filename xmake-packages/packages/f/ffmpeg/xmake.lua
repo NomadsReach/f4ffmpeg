@@ -157,7 +157,7 @@ package("ffmpeg")
             package:set("license", "LGPL-3.0")
         end
         if package:is_plat("windows", "mingw") and not package:config("shared") then
-            package:add("syslinks", "Bcrypt", "Mfplat", "mfuuid", "Ole32", "Secur32", "Strmiids", "User32", "ws2_32")
+            package:add("syslinks", "Bcrypt", "Crypt32", "Mfplat", "mfuuid", "Ncrypt", "Ole32", "Secur32", "Strmiids", "User32", "ws2_32")
         end
         if is_subhost("windows") and os.arch() == "x64" then
             local configs = {
