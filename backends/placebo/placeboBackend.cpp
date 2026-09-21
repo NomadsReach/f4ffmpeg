@@ -517,6 +517,11 @@ namespace
 
             const auto* hwctx = frameDevice.vulkan;
 
+#if LIBAVUTIL_VERSION_MAJOR >= 61 && PL_API_VER < 365
+            if (hwctx->queue_flags != 0)
+                return false;
+#endif
+
             pl_vulkan_import_params params{};
             params.instance = hwctx->inst;
             params.get_proc_addr = hwctx->get_proc_addr;
