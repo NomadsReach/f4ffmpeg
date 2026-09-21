@@ -4,9 +4,11 @@ package("ffmpeg")
     set_license("GPL-3.0")
 
     add_urls("https://ffmpeg.org/releases/ffmpeg-$(version).tar.bz2", {alias = "home"})
+    add_urls("https://ffmpeg.org/releases/ffmpeg-$(version).tar.xz", {alias = "home_xz"})
     add_urls("https://github.com/FFmpeg/FFmpeg/archive/n$(version).zip", {alias = "github"})
     add_urls("https://git.ffmpeg.org/ffmpeg.git", "https://github.com/FFmpeg/FFmpeg.git", {alias = "git"})
 
+    add_versions("home_xz:9.0.2", "8c3850283eb25fa026482078a04051e0be17347b09ef81a0849bec15a96e002e")
     add_versions("home:7.1", "fd59e6160476095082e94150ada5a6032d7dcc282fe38ce682a00c18e7820528")
     add_versions("home:7.0", "a24d9074bf5523a65aaa9e7bd02afe4109ce79d69bd77d104fed3dab4b934d7a")
     add_versions("home:6.1", "eb7da3de7dd3ce48a9946ab447a7346bd11a3a85e6efb8f2c2ce637e7f547611")
@@ -25,6 +27,7 @@ package("ffmpeg")
     add_versions("github:5.0.1", "f9c2e06cafa4381df8d5c9c9e14d85d9afcbc10c516c6a206f821997cc7f6440")
     add_versions("github:4.4.4", "b0d16b48bd8ccb160e14291145294b0b12597e32b17175f7604288a8c73216de")
     add_versions("github:4.0.2", "4df1ef0bf73b7148caea1270539ef7bd06607e0ea8aa2fbf1bb34062a097f026")
+    add_versions("git:9.0.2", "n9.0.2")
     add_versions("git:7.1", "n7.1")
     add_versions("git:7.0", "n7.0")
     add_versions("git:6.1", "n6.1")
@@ -65,7 +68,7 @@ package("ffmpeg")
         add_configs("libdrm", {description = "Enable libdrm hardware acceleration", default = true, type = "boolean"})
     end
 
-    add_links("avfilter", "avdevice", "avformat", "avcodec", "swscale", "swresample", "avutil", "postproc")
+    add_links("avfilter", "avdevice", "avformat", "avcodec", "swscale", "swresample", "avutil")
     if is_plat("macosx", "iphoneos") then
         add_frameworks("CoreFoundation", "Foundation", "CoreVideo", "CoreMedia", "VideoToolbox", "Security")
         if is_plat("iphoneos") then
@@ -96,7 +99,11 @@ package("ffmpeg")
     on_fetch("mingw", "linux", "macosx", function (package, opt)
         if opt.system then
             local result
-            for _, name in ipairs({"libavcodec", "libavdevice", "libavfilter", "libavformat", "libavutil", "libpostproc", "libswresample", "libswscale"}) do
+            local libraries = {"libavcodec", "libavdevice", "libavfilter", "libavformat", "libavutil", "libswresample", "libswscale"}
+            if package:version() and package:version():lt("8.0") then
+                table.insert(libraries, 6, "libpostproc")
+            end
+            for _, name in ipairs(libraries) do
                 local pkginfo = package:find_package("pkgconfig::" .. name, opt)
                 if not pkginfo then
                     return
@@ -110,6 +117,10 @@ package("ffmpeg")
     end)
 
     on_load(function (package)
+        if package:version() and package:version():lt("8.0") then
+            package:add("links", "postproc")
+        end
+
         local configdeps = {
             zlib        = "zlib",
             bzlib       = "bzip2",
@@ -389,26 +400,38 @@ package("ffmpeg")
             -- compile probe; FFmpeg still performs its later CUDA/CUVID feature
             -- checks normally.
             if package:config("nvdec") or package:config("nvenc") then
-                local old_ffnvcodec_probe = [[    check_pkg_config ffnvcodec "ffnvcodec >= 12.1.14.0" "$ffnv_hdr_list" "" || \
-      check_pkg_config ffnvcodec "ffnvcodec >= 12.0.16.1 ffnvcodec < 12.1" "$ffnv_hdr_list" "" || \
-      check_pkg_config ffnvcodec "ffnvcodec >= 11.1.5.3 ffnvcodec < 12.0" "$ffnv_hdr_list" "" || \
-      check_pkg_config ffnvcodec "ffnvcodec >= 11.0.10.3 ffnvcodec < 11.1" "$ffnv_hdr_list" "" || \
-      check_pkg_config ffnvcodec "ffnvcodec >= 8.1.24.15 ffnvcodec < 8.2" "$ffnv_hdr_list" ""]]
-
-                local new_ffnvcodec_probe = [[    disable ffnvcodec
-    check_headers "$ffnv_hdr_list" && enable ffnvcodec]]
-
-                io.replace(
-                    "configure",
-                    old_ffnvcodec_probe,
-                    new_ffnvcodec_probe,
-                    {plain = true}
+                local configure_text = io.readfile("configure")
+                local probe_start = configure_text:find(
+                    "if ! disabled ffnvcodec; then",
+                    1,
+                    true
+                )
+                local probe_end = probe_start and configure_text:find(
+                    "\nfi\n\ncheck_cpp_condition winrt",
+                    probe_start,
+                    true
+                )
+                assert(
+                    probe_start and probe_end,
+                    "failed to locate FFmpeg's ffnvcodec probe"
                 )
 
-                local configure_text = io.readfile("configure")
+                local new_ffnvcodec_probe = [[if ! disabled ffnvcodec; then
+    ffnv_hdr_list="ffnvcodec/nvEncodeAPI.h ffnvcodec/dynlink_cuda.h ffnvcodec/dynlink_cuviddec.h ffnvcodec/dynlink_nvcuvid.h"
+    disable ffnvcodec
+    check_headers "$ffnv_hdr_list" && enable ffnvcodec
+fi]]
+
+                configure_text =
+                    configure_text:sub(1, probe_start - 1) ..
+                    new_ffnvcodec_probe ..
+                    configure_text:sub(probe_end + 3)
+
+                io.writefile("configure", configure_text)
+
                 assert(
                     not configure_text:find(
-                        'check_pkg_config ffnvcodec "ffnvcodec >= 12.1.14.0"',
+                        "check_pkg_config ffnvcodec",
                         1,
                         true
                     ),

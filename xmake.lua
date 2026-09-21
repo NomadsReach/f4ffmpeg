@@ -20,7 +20,7 @@ add_repositories(
 -- Build FFmpeg with NVIDIA's NVDEC/CUDA decode path available. This remains
 -- runtime-optional: systems without an NVIDIA driver/CUDA bridge simply skip
 -- the backend and fall through to the remaining hardware APIs/software.
-add_requires("ffmpeg", {
+add_requires("ffmpeg 9.0.2", {
     configs = {
         ffmpeg = false,
         ffprobe = false,
