@@ -1,0 +1,70 @@
+name: NIF source repair proof
+
+on:
+  push:
+    branches: [ validation/nif-source-repair ]
+
+permissions:
+  contents: read
+
+jobs:
+  source-proof:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: preserve source line endings
+        run: git config --global core.autocrlf false
+      - name: checkout
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+          persist-credentials: false
+      - name: reproduce and verify source repairs
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $installation = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if (-not $installation) { throw 'MSVC installation not found' }
+          & "$installation\Common7\Tools\Launch-VsDevShell.ps1" -Arch amd64 -HostArch amd64 -SkipAutomaticLocation
+          New-Item -ItemType Directory -Force proof | Out-Null
+          $sourceHash = git hash-object --no-filters src/nifHandler.cpp
+          if ($sourceHash -ne '1fd9372d616877e39e7ed6ab1a34fa3655da53fc') { throw "Unexpected source blob: $sourceHash" }
+          git submodule status --recursive | Set-Content proof/submodules-before.txt
+          python tools/check_nif_source.py --compiler cl --output proof/before *> proof/before.txt
+          if ($LASTEXITCODE -ne 1) { throw 'Expected baseline source checks to fail' }
+          if (-not (Select-String -Path proof/before.txt -SimpleMatch 'GROUPS: 0/3 passed')) { throw 'Expected all three baseline groups to fail' }
+          python tools/repair_nif_source.py .
+          if ($LASTEXITCODE -ne 0) { throw 'Source patch failed' }
+          python tools/check_nif_source.py --compiler cl --output proof/after *> proof/after.txt
+          if ($LASTEXITCODE -ne 0) { Get-Content proof/after.txt; throw 'Repaired source checks failed' }
+          git diff --check
+          if ($LASTEXITCODE -ne 0) { throw 'Whitespace check failed' }
+          git diff -- src/nifHandler.cpp | Set-Content proof/source.diff
+          git diff --exit-code -- lib
+          if ($LASTEXITCODE -ne 0) { throw 'Submodule change detected' }
+          git submodule status --recursive | Set-Content proof/submodules-after.txt
+          if (Compare-Object (Get-Content proof/submodules-before.txt) (Get-Content proof/submodules-after.txt)) { throw 'Submodule state changed' }
+          Get-Content proof/after.txt
+      - name: publish verified source object without changing refs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $content = [Convert]::ToBase64String([IO.File]::ReadAllBytes((Join-Path $PWD 'src/nifHandler.cpp')))
+          $payload = @{ content = $content; encoding = 'base64' } | ConvertTo-Json -Compress
+          $headers = @{ Authorization = "Bearer $env:GH_TOKEN"; Accept = 'application/vnd.github+json'; 'X-GitHub-Api-Version' = '2022-11-28' }
+          $result = Invoke-RestMethod -Method Post -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/git/blobs" -Headers $headers -ContentType 'application/json' -Body $payload
+          $expected = git hash-object --no-filters src/nifHandler.cpp
+          if ($result.sha -ne $expected) { throw 'Published source object differs from tested bytes' }
+          "VERIFIED_NIF_BLOB=$($result.sha)" | Tee-Object -FilePath proof/source-blob.txt
+      - name: upload proof
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: nif-source-proof
+          path: proof/
+          if-no-files-found: error
