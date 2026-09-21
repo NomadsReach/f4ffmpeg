@@ -521,10 +521,9 @@ fi]]
                     zscale_text:find(main_auto, 1, true),
                     "FFmpeg zscale main CPU-dispatch assignment was not found"
                 )
-                assert(
-                    zscale_text:find(alpha_auto, 1, true),
-                    "FFmpeg zscale alpha CPU-dispatch assignment was not found"
-                )
+
+                local has_alpha_cpu =
+                    zscale_text:find(alpha_auto, 1, true) ~= nil
 
                 io.replace(
                     zscale_source,
@@ -532,17 +531,23 @@ fi]]
                     main_selected,
                     {plain = true}
                 )
-                io.replace(
-                    zscale_source,
-                    alpha_auto,
-                    alpha_selected,
-                    {plain = true}
-                )
+
+                if has_alpha_cpu then
+                    io.replace(
+                        zscale_source,
+                        alpha_auto,
+                        alpha_selected,
+                        {plain = true}
+                    )
+                end
 
                 zscale_text = io.readfile(zscale_source)
                 assert(
                     zscale_text:find(main_selected, 1, true) and
-                    zscale_text:find(alpha_selected, 1, true),
+                    (
+                        not has_alpha_cpu or
+                        zscale_text:find(alpha_selected, 1, true)
+                    ),
                     "failed to set FFmpeg zscale/zimg CPU type to " .. requested_cpu
                 )
 
