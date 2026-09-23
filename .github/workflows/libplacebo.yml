@@ -7,6 +7,7 @@ on:
     paths:
       - ".github/workflows/libplacebo.yml"
       - "xmake.lua"
+      - "xmake-packages/**"
       - "src/frameConverter.cpp"
       - "src/placeboBackend*.h"
       - "src/placeboBackend*.cpp"
@@ -20,6 +21,7 @@ on:
     paths:
       - ".github/workflows/libplacebo.yml"
       - "xmake.lua"
+      - "xmake-packages/**"
       - "src/frameConverter.cpp"
       - "src/placeboBackend*.h"
       - "src/placeboBackend*.cpp"
@@ -29,7 +31,13 @@ on:
       - "vcpkg-overlays/libplacebo/**"
       - "tools/install-libplacebo-vcpkg.ps1"
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 env:
+  XMAKE_PKG_CACHEDIR: ${{ github.workspace }}\.xmake-cache
+  XMAKE_PKG_INSTALLDIR: ${{ github.workspace }}\.xmake-packages
   VCPKG_ROOT: C:\vcpkg
   VCPKG_OVERLAY_PORTS: ${{ github.workspace }}\vcpkg-overlays
   VCPKG_DEFAULT_TRIPLET: x64-windows-static-md
@@ -54,6 +62,20 @@ jobs:
         uses: xmake-io/github-action-setup-xmake@v1
         with:
           xmake-version: latest
+
+      - name: Cache Xmake downloads
+        uses: actions/cache@v5
+        with:
+          path: ${{ github.workspace }}\.xmake-cache
+          key: ${{ runner.os }}-${{ runner.arch }}-xmake-downloads
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-xmake-
+
+      - name: Cache Xmake packages
+        uses: actions/cache@v5
+        with:
+          path: ${{ github.workspace }}\.xmake-packages
+          key: ${{ runner.os }}-${{ runner.arch }}-msvc-xmake-pkgs-vulkan2-${{ hashFiles('xmake.lua', 'xmake-packages/**/*.lua') }}
 
       - name: verify optional-backend sources
         run: |
@@ -84,12 +106,79 @@ jobs:
       - name: install static libplacebo with vcpkg
         run: .\tools\install-libplacebo-vcpkg.ps1
 
+      - name: verify libplacebo Vulkan capability
+        run: |
+          $config = Join-Path $env:VCPKG_ROOT "installed\$env:VCPKG_DEFAULT_TRIPLET\include\libplacebo\config.h"
+          if (-not (Test-Path -LiteralPath $config -PathType Leaf)) {
+            throw "libplacebo config.h was not installed"
+          }
+          if (-not (Select-String -LiteralPath $config -Pattern '^#define PL_HAVE_VULKAN 1$' -Quiet)) {
+            throw "libplacebo was not built with Vulkan support"
+          }
+          if (-not (Select-String -LiteralPath $config -Pattern '^#define PL_HAVE_GLSLANG 1$' -Quiet)) {
+            throw "libplacebo was not built with glslang support"
+          }
+          if (Select-String -LiteralPath $config -Pattern '^#define PL_HAVE_D3D11 1$' -Quiet) {
+            throw "libplacebo unexpectedly built its unused D3D11 backend"
+          }
+      - name: reset Xmake package install cache before static backend
+        run: |
+          if (Test-Path -LiteralPath $env:XMAKE_PKG_INSTALLDIR) {
+            Remove-Item -LiteralPath $env:XMAKE_PKG_INSTALLDIR -Recurse -Force
+          }
+
       - name: configure optional backend
+        id: static_config
+        continue-on-error: true
         run: |
           xmake config -y -vD `
             --mode=releasedbg `
             --toolchain=msvc `
             --libplacebo_mode=static
+
+      - name: capture FFmpeg configure proof
+        if: steps.static_config.outcome == 'failure'
+        run: |
+          $proof = Join-Path $env:GITHUB_WORKSPACE "ffmpeg-config-proof"
+          New-Item -ItemType Directory -Force -Path $proof | Out-Null
+
+          $roots = @(
+            (Join-Path $env:TEMP ".xmake"),
+            (Join-Path $env:LOCALAPPDATA ".xmake"),
+            $env:GITHUB_WORKSPACE
+          ) | Where-Object { $_ -and (Test-Path -LiteralPath $_) }
+
+          $logs = @(
+            foreach ($root in $roots) {
+              Get-ChildItem -LiteralPath $root -Recurse -Filter "config.log" -File -ErrorAction SilentlyContinue
+            }
+          )
+
+          if ($logs.Count -eq 0) {
+            "No FFmpeg config.log was found." | Set-Content -LiteralPath (Join-Path $proof "missing.txt")
+          } else {
+            $index = 0
+            foreach ($log in $logs) {
+              $index++
+              $destination = Join-Path $proof ("config-{0}.log" -f $index)
+              Copy-Item -LiteralPath $log.FullName -Destination $destination
+              "SOURCE=$($log.FullName)" | Add-Content -LiteralPath (Join-Path $proof "locations.txt")
+              Get-Content -LiteralPath $log.FullName -Tail 250
+            }
+          }
+
+      - name: upload FFmpeg configure proof
+        if: steps.static_config.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ffmpeg-config-proof
+          path: ffmpeg-config-proof/
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: fail if static configuration failed
+        if: steps.static_config.outcome == 'failure'
+        run: throw "Static libplacebo configuration failed. See ffmpeg-config-proof."
 
       - name: build core with static-backend configuration
         run: xmake build -y -vD f4ffmpeg

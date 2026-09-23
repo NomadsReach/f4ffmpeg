@@ -20,7 +20,7 @@ add_repositories(
 -- Build FFmpeg with NVIDIA's NVDEC/CUDA decode path available. This remains
 -- runtime-optional: systems without an NVIDIA driver/CUDA bridge simply skip
 -- the backend and fall through to the remaining hardware APIs/software.
-add_requires("ffmpeg", {
+add_requires("ffmpeg 9.0.2", {
     configs = {
         ffmpeg = false,
         ffprobe = false,
@@ -58,9 +58,7 @@ if placebo_mode == "static" then
     --
     -- libplacebo is installed as a static archive. Xmake's generic vcpkg package
     -- discovery does not reliably propagate the private dependency closure from
-    -- libplacebo.pc, so make the non-system static dependencies explicit for the
-    -- companion target as well. The repository port uses glslang directly rather
-    -- than shaderc to avoid the shaderc 2026.2 compiler-crash regression implicated by the first-render failure.
+    -- libplacebo.pc, so make the non-system static dependencies explicit.
     add_requires(
         "vcpkg::libplacebo",
         {
@@ -71,12 +69,6 @@ if placebo_mode == "static" then
         "vcpkg::glslang",
         {
             alias = "f4ffmpeg-glslang"
-        }
-    )
-    add_requires(
-        "vcpkg::spirv-cross",
-        {
-            alias = "f4ffmpeg-spirv-cross"
         }
     )
 elseif placebo_mode == "auto" then
@@ -91,13 +83,6 @@ elseif placebo_mode == "auto" then
         "vcpkg::glslang",
         {
             alias = "f4ffmpeg-glslang",
-            optional = true
-        }
-    )
-    add_requires(
-        "vcpkg::spirv-cross",
-        {
-            alias = "f4ffmpeg-spirv-cross",
             optional = true
         }
     )
@@ -147,8 +132,7 @@ local build_placebo_backend =
     (
         placebo_mode == "auto" and
         has_package("f4ffmpeg-libplacebo") and
-        has_package("f4ffmpeg-glslang") and
-        has_package("f4ffmpeg-spirv-cross")
+        has_package("f4ffmpeg-glslang")
     )
 
 if build_placebo_backend then
@@ -167,15 +151,11 @@ if build_placebo_backend then
         -- The companion owns the hard libplacebo link. libplacebo itself is
         -- static here, so f4ffmpeg_placebo.dll is the only optional runtime
         -- component that core needs to probe. Keep the static dependency
-        -- closure explicit: glslang and SPIRV-Cross are private libplacebo
-        -- dependencies retained by the current vcpkg overlay. The Vulkan
-        -- companion itself only needs libplacebo's Vulkan+glslang backend;
-        -- D3D11 is used solely for the final Fallout texture handoff.
+        -- closure explicit for the Vulkan + glslang backend.
         add_packages(
             "ffmpeg",
             "f4ffmpeg-libplacebo",
-            "f4ffmpeg-glslang",
-            "f4ffmpeg-spirv-cross"
+            "f4ffmpeg-glslang"
         )
         add_defines("PL_STATIC")
         add_syslinks("d3d11", "dxgi", "shlwapi", "version")

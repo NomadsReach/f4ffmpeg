@@ -57,16 +57,6 @@ file(COPY "${JINJA_SOURCE}/src/"
 file(COPY "${MARKUPSAFE_SOURCE}/src/"
      DESTINATION "${SOURCE_PATH}/3rdparty/markupsafe/src")
 
-# vcpkg's SPIRV-Cross port is deliberately static-only and installs the C API
-# as `spirv-cross-c`. libplacebo 7.360.1 asks for the shared pkg-config name
-# when D3D11 is enabled. Keep the version/required logic intact and change
-# only the dependency identity.
-vcpkg_replace_string(
-    "${SOURCE_PATH}/src/d3d11/meson.build"
-    "spirv-cross-c-shared"
-    "spirv-cross-c"
-)
-
 # Meson's compiler.find_library(static: true) does not reliably honor vcpkg's
 # linker search path. libplacebo 7.360.x uses find_library() directly for the
 # glslang/SPIR-V closure, which can therefore report `SPIRV` missing even
@@ -146,10 +136,12 @@ include("${CURRENT_HOST_INSTALLED_DIR}/share/vcpkg-tool-meson/vcpkg-port-config.
 
 set(LIBPLACEBO_MESON_OPTIONS
     -Ddefault_library=static
-    -Dd3d11=enabled
+    -Dd3d11=disabled
     -Dshaderc=disabled
     -Dglslang=enabled
-    -Dvulkan=disabled
+    -Dvulkan=enabled
+    -Dvk-proc-addr=disabled
+    -Dvulkan-registry=${CURRENT_INSTALLED_DIR}/share/vulkan/registry/vk.xml
     -Dopengl=disabled
     -Ddovi=disabled
     -Dlibdovi=disabled

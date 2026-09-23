@@ -7,10 +7,15 @@ on:
       - ".github/workflows/build.yml"
       - "include/**"
       - "src/**"
+      - "tools/check_nif_source.py"
       - "xmake.lua"
       - "xmake-packages/**"
   pull_request:
     branches: [ main ]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 env:
   XMAKE_PKG_CACHEDIR: ${{ github.workspace }}\.xmake-cache
@@ -33,6 +38,16 @@ jobs:
         uses: actions/checkout@v6
         with:
           submodules: recursive
+
+      - name: source regression checks
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $installation = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if (-not $installation) { throw 'MSVC installation not found' }
+          & "$installation\Common7\Tools\Launch-VsDevShell.ps1" -Arch amd64 -HostArch amd64 -SkipAutomaticLocation
+          python tools/check_nif_source.py --compiler cl --output source-checks
+          if ($LASTEXITCODE -ne 0) { throw 'NIF source regression checks failed' }
 
       - name: setup
         uses: xmake-io/github-action-setup-xmake@v1
@@ -67,3 +82,12 @@ jobs:
             build/**/*.dll
             build/**/*.pdb
           if-no-files-found: error
+
+      - name: upload source regression proof
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: source-checks-${{ matrix.mode }}-${{ matrix.toolchain }}
+          path: source-checks/
+          if-no-files-found: warn
+          retention-days: 7

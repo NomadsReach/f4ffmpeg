@@ -7,7 +7,7 @@
   "supports": "windows & !uwp & !xbox",
   "dependencies": [
     "glslang",
-    "spirv-cross",
+    "vulkan",
     {
       "name": "pkgconf",
       "host": true

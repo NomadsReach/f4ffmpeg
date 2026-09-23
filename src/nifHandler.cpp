@@ -534,7 +534,7 @@ namespace f4ffmpeg
             if (isSupportedVideoUrl(entry))
             {
                 settings.playlist.emplace_back(entry);
-                REX::DEBUG("URL deferred: %s", entry);
+                REX::DEBUG("URL deferred: {}", entry);
                 return;
             }
 
@@ -982,8 +982,8 @@ namespace f4ffmpeg
                       key == "file")))
                 {
                     REX::DEBUG(
-                        "  [INI %s line %d]: parsing INI item "%s"",
-                        iniPath.string().c_str(), lineNumber, value.c_str()
+                        "  [INI {} line {}]: parsing INI item \"{}\"",
+                        iniPath.string(), lineNumber, value
                     );
                     appendPlaylistEntry(
                         settings,
@@ -1327,60 +1327,28 @@ namespace f4ffmpeg
 
                     const auto& locationSettings = *overrideIt;
                     if (locationSettings.looping)
-                    if (locationSettings.looping)
-                    {
-                        const auto parsed = parseIniBool(locationSettings.looping.value_or("false"));
-                        if (parsed)
-                            result.settings.looping = *parsed;
-                        else
-                            REX::ERROR("Invalid Loop value '{}' in [Location.%s]: expected 0|1|true|false|yes|no|on|off",
-                                           locationSettings.looping.value_or("false"), locId);
-                    }
+                        result.settings.looping = *locationSettings.looping;
                     if (locationSettings.shuffle)
-                    {
-                        const auto parsed = parseIniBool(locationSettings.shuffle.value_or("false"));
-                        if (parsed)
-                            result.settings.shuffle = *parsed;
-                        else
-                            REX::ERROR("Invalid Shuffle value in [Location.%s]: '%s'",
-                                           locId, locationSettings.shuffle.value_or("false"));
-                    }
+                        result.settings.shuffle = *locationSettings.shuffle;
                     if (locationSettings.transition)
-                    {
-                        const auto parsed = parseTransitionMethod(locationSettings.transition.value_or(""), false, 0);
-                        if (parsed)
-                            result.settings.transition = *parsed;
-                        else
-                            REX::ERROR("Invalid Transition in [Location.%s]: '%s'",
-                                           locId, locationSettings.transition.value_or(""));
-                    }
+                        result.settings.transition = locationSettings.transition;
                     if (locationSettings.transitionImage)
-                    {
-                        videoPlaybackSettings temp;
-                        setPlaylistTransitionImage(temp, iniPath, locationSettings.transitionImage.value_or(""), 0);
-                        result.settings.transitionImage = temp.transitionImage;
-                    }
+                        result.settings.transitionImage = locationSettings.transitionImage;
+
                     if (locationSettings.hasPlaylist)
                     {
-                        const int playlistSize = (int)locationSettings.playlist.size();
-                        const int override = locationSettings.overridePlaylist ? 1 : 0;
-                        REX::DEBUG("  [Location.%s] playlist: %d items (override=%d)",
-                                       locId, playlistSize, override);
-
                         if (locationSettings.overridePlaylist)
-                        {
-                            REX::DEBUG("  [REPLACE] %d playlist items", playlistSize);
                             result.settings.playlist = locationSettings.playlist;
-                        }
-                        else if (!locationSettings.playlist.empty())
-                        {
-                            REX::DEBUG("  [MERGE] appending %d playlist items", playlistSize);
-                            result.settings.playlist.insert(result.settings.playlist.end(),
-                                                       locationSettings.playlist.begin(),
-                                                       locationSettings.playlist.end());
-                        }
+                        else
+                            result.settings.playlist.insert(
+                                result.settings.playlist.end(),
+                                locationSettings.playlist.begin(),
+                                locationSettings.playlist.end()
+                            );
                     }
-                    result.locationKey = locId;
+
+                    result.overridePlaylist = locationSettings.overridePlaylist;
+                    result.locationKey = locationKey;
                     return true;
                 };
 
@@ -2675,17 +2643,6 @@ namespace f4ffmpeg
 
                 ++activePlaylists;
 
-                REX::DEBUG(
-                    "  f4ffmpeg INDEXING standalone INI '%s' (stem='%s', "
-                    "global=%d items, location=%d items, hasGlobalPlayback=%s, "
-                    "standalonePlaylist=%s %s)",
-                    iniPath.string().c_str(), relativeStem->c_str(),
-                    (int)playbackSettings.playlist.size(),
-                    (int)playbackSettings.locationOverrides.size(),
-                    hasLocationPlayback ? "true" : "false",
-                    hasGlobalPlayback ? "true" : "false",
-                    replacement.standalonePlaylist ? "yes" : "no"
-                );
                 REX::INFO(
                     "f4ffmpeg indexed standalone playlist '{}' for texture stem '{}' with global playback={}, location playback={}.",
                     iniPath.string(),
@@ -2791,11 +2748,13 @@ namespace f4ffmpeg
             // KEY FIX: For standalone playlist INIs, the [Playlist] global playlist
             // ALWAYS takes precedence. Location playlists from [Location.EditorID.Playlist]
             // in a sidecar INI must NOT incorrectly affect unrelated standalone playlist INIs.
+            std::string videoPath = replacement->second.videoPath;
+
             if (replacement->second.standalonePlaylist &&
                 !replacement->second.playbackSettings.playlist.empty())
             {
-                REX::DEBUG("  -> using global playlist: %s (standalone INI always uses its own playlist)",
-                             replacement->second.playbackSettings.playlist.front().c_str());
+                REX::DEBUG("  -> using global playlist: {} (standalone INI always uses its own playlist)",
+                             replacement->second.playbackSettings.playlist.front());
                 videoPath =
                     std::string(replacement->second.playbackSettings.playlist.front());
             }
@@ -4746,9 +4705,9 @@ namespace f4ffmpeg
                     shaderProperty->DoClearRenderPasses();
 
                     REX::DEBUG(
-                        "f4ffmpeg target-local workshop-TV %s property=%p blocked render-pass after nulling base-texture",
-                        workshopTvEffectKindName(effectKind).c_str(),
-                        static_cast<void*>(shaderProperty)
+                        "f4ffmpeg target-local workshop-TV {} property={} blocked render-pass after nulling base-texture",
+                        workshopTvEffectKindName(effectKind),
+                        static_cast<const void*>(shaderProperty)
                     );
 
                     return std::addressof(
